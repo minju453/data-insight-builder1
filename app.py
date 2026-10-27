@@ -291,6 +291,28 @@ def health():
         "loaded_datasets_count": len([k for k in DATASETS.keys() if not k.endswith('.csv')])
     })
 
+# 청년 창업가 맞춤형 추가 확장 업종 및 100대 업종 매핑 테이블
+INDUSTRY_MAPPING = {
+    "베이커리 및 디저트전문점": "제과점",
+    "무인카페 및 무인아이스크림": "커피음료점",
+    "스터디카페 및 공유오피스": "독서실",
+    "필라테스 및 요가전문스튜디오": "헬스클럽",
+    "반려동물 미용 및 펫케어샵": "애완용품점",
+    "네일아트 및 피부관리샵": "피부관리업",
+    "스튜디오 및 셀프사진관": "사진관",
+    "밀키트 및 신선식품전문점": "식료품점",
+    "온라인쇼핑몰 및 전자상거래": "통신판매업",
+    "IT 소프트웨어 및 웹개발 서비스": "통신기기판매점",
+    "배달전문 야식 및 도시락점": "간이음식점",
+    "피트니스 및 헬스케어센터": "헬스클럽",
+    "브런치카페 및 샐러드전문점": "커피음료점",
+    "셀프빨래방 및 코인워시": "세탁소"
+}
+
+def resolve_industry_name(ind_name):
+    """확장 업종명을 실제 100대 생활업종 데이터 키로 매핑"""
+    return INDUSTRY_MAPPING.get(ind_name, ind_name)
+
 @app.route("/datasets", methods=["GET"])
 def get_datasets():
     """선택 가능한 지역/업종 필터 옵션 및 도구 카탈로그 목록 반환"""
@@ -310,7 +332,10 @@ def get_datasets():
             sigungus = sorted([str(g) for g in sub['시군구'].dropna().unique() if str(g).strip()])
             sigungu_map[sido] = sigungus
 
-        industry_list = sorted([str(i) for i in df_100['업종'].dropna().unique() if str(i).strip()])
+        base_industries = [str(i) for i in df_100['업종'].dropna().unique() if str(i).strip()]
+        # 청년 창업 인기 확장 업종 추가 (다양한 선택지 제공)
+        expanded_industries = list(INDUSTRY_MAPPING.keys())
+        all_industries = sorted(list(set(base_industries + expanded_industries)))
 
         # 도구 카탈로그 요약 목록
         tools_summary = [
@@ -318,13 +343,13 @@ def get_datasets():
             for tid, t in TOOL_CATALOG.items()
         ]
 
-        logger.info(f"/datasets returned {len(sido_list)} sidos, {len(industry_list)} industries, {len(tools_summary)} tools")
+        logger.info(f"/datasets returned {len(sido_list)} sidos, {len(all_industries)} industries (expanded), {len(tools_summary)} tools")
 
         return jsonify({
             "success": True,
             "sido_list": sido_list,
             "sigungu_map": sigungu_map,
-            "industry_list": industry_list,
+            "industry_list": all_industries,
             "tools": tools_summary
         })
     except Exception as e:
@@ -339,13 +364,12 @@ def inspect_data():
     """사용자가 선택한 조건(지역, 업종)으로 데이터를 필터링하고 8개 항목 진단 결과 JSON 반환"""
     try:
         req_data = request.get_json(silent=True) or {}
-        sido = req_data.get("sido", "").strip()
-        sigungu = req_data.get("sigungu", "").strip()
-        industry = req_data.get("industry", "").strip()
+        raw_industry = req_data.get("industry", "").strip()
+        industry = resolve_industry_name(raw_industry)
 
         if not sido:
             return jsonify({"success": False, "error": "필수 선택값 누락: 지역(시/도)을 선택해 주세요."}), 400
-        if not industry:
+        if not raw_industry:
             return jsonify({"success": False, "error": "필수 선택값 누락: 업종을 선택해 주세요."}), 400
 
         df_100 = DATASETS.get('business_100')
@@ -532,7 +556,8 @@ def run_tool():
         tool_id = req_data.get("tool_id", "").strip()
         sido = req_data.get("sido", "서울특별시").strip()
         sigungu = req_data.get("sigungu", "강남구").strip()
-        industry = req_data.get("industry", "커피음료점").strip()
+        raw_industry = req_data.get("industry", "커피음료점").strip()
+        industry = resolve_industry_name(raw_industry)
         base_period = req_data.get("base_period", "당월").strip()
         exclude_aggregated = req_data.get("exclude_aggregated", True)
 
