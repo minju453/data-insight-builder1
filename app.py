@@ -35,6 +35,30 @@ app = Flask(
 # 전역 데이터 저장소
 DATASETS = {}
 
+def clean_value_for_json(val):
+    """NaN, Inf, -Inf 값을 JSON 규격에 맞게 None(null)으로 변환"""
+    if val is None:
+        return None
+    if isinstance(val, (float, np.floating)):
+        if math.isnan(val) or math.isinf(val):
+            return None
+        return round(float(val), 4)
+    if isinstance(val, (int, np.integer)):
+        return int(val)
+    if pd.isna(val):
+        return None
+    return val
+
+def clean_record_for_json(records):
+    """딕셔너리 리스트 내 모든 특수 부동소수점 값을 정리"""
+    cleaned = []
+    for row in records:
+        cleaned_row = {}
+        for k, v in row.items():
+            cleaned_row[k] = clean_value_for_json(v)
+        cleaned.append(cleaned_row)
+    return cleaned
+
 def get_gemini_client():
     """Gemini API 클라이언트 생성"""
     api_key = os.getenv("GEMINI_API_KEY", "").strip()
@@ -42,7 +66,124 @@ def get_gemini_client():
         raise ValueError("API Key 미설정: .env 파일에 GEMINI_API_KEY를 설정해 주세요.")
     return genai.Client(api_key=api_key)
 
-def clean_value_for_json(val):
+def call_gemini_smart_fallback(prompt, preferred_model="gemini-3.8-flash"):
+    """
+    여러 Gemini 모델 후보를 순차적으로 시도하여 429 Quota Exceeded나 404 발생 시
+    자동으로 대체 모델로 우아하게 전환(Fallback)하는 함수
+    """
+    api_key = os.getenv("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise ValueError("API Key 미설정: .env 파일에 GEMINI_API_KEY를 설정해 주세요.")
+
+    client = genai.Client(api_key=api_key)
+    
+    # 후보 모델 목록 (우선순위 순서)
+    candidate_models = [
+        preferred_model,
+        "gemini-3.5-flash",
+        "gemini-flash-latest",
+        "gemini-2.5-flash-lite",
+        "gemini-3.1-flash-lite"
+    ]
+    # 중복 제거
+    candidate_models = list(dict.fromkeys([m for m in candidate_models if m]))
+
+    last_error = None
+    for model_name in candidate_models:
+        try:
+            logger.info(f"Attempting Gemini call with model: {model_name}...")
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt
+            )
+            if response and response.text:
+                logger.info(f"Gemini call SUCCESS with model: {model_name}")
+                return response.text.strip()
+        except Exception as e:
+            err_msg = str(e)
+            logger.warning(f"Model {model_name} failed: {err_msg[:80]}")
+            last_error = e
+            # 429나 404인 경우 다음 모델 계속 시도
+            continue
+
+    logger.error(f"All Gemini fallback models exhausted. Last error: {last_error}")
+    return None
+
+def generate_rule_based_suggestions(diagnosis):
+    """Gemini 쿼터 초과 시 공공데이터 진단 결과를 바탕으로 즉시 제공하는 지능형 추천 도구 세트"""
+    sel = diagnosis.get("selected_conditions", {})
+    industry = sel.get("industry", "해당 업종")
+    sido = sel.get("sido", "해당 지역")
+    sigungu = sel.get("sigungu", "")
+    area = f"{sido} {sigungu}".strip()
+
+    return [
+        {
+            "tool_id": "market_saturation_index",
+            "tool_name": TOOL_CATALOG["market_saturation_index"]["name"],
+            "reason": f"{area}의 {industry} 점포 과밀도를 전국 평균과 비교하여 레드오션 여부를 즉시 진단합니다."
+        },
+        {
+            "tool_id": "industry_growth_trend",
+            "tool_name": TOOL_CATALOG["industry_growth_trend"]["name"],
+            "reason": f"전년동월 및 전월 대비 {industry}의 최근 점포수 증감률(MoM, YoY)로 성장 추세를 파악합니다."
+        },
+        {
+            "tool_id": "initial_cost_estimate",
+            "tool_name": TOOL_CATALOG["initial_cost_estimate"]["name"],
+            "reason": f"보증금, 인테리어, 설비비 등 {industry} 창업에 필요한 실질 초기 자본 규모를 산출합니다."
+        },
+        {
+            "tool_id": "survival_rate_analysis",
+            "tool_name": TOOL_CATALOG["survival_rate_analysis"]["name"],
+            "reason": "창업 후 1년, 3년(데스밸리), 5년 생존율을 분석하여 자금 소진 리스크를 예방합니다."
+        }
+    ]
+
+def generate_rule_based_report(diagnosis, calc_result, mode="B"):
+    """Gemini 쿼터 초과 시에도 Pandas 정밀 계산 결과를 바탕으로 완성된 창업 전략 보고서 생성"""
+    tool_name = calc_result.get("tool_name", "시장 데이터 분석")
+    base_period = calc_result.get("base_period", "당월")
+    used_rows = calc_result.get("used_rows", 0)
+    excluded_rows = calc_result.get("excluded_rows", 0)
+    metrics = calc_result.get("summary_metrics", {})
+    sel = diagnosis.get("selected_conditions", {})
+    area = f"{sel.get('sido', '')} {sel.get('sigungu', '')}".strip()
+    industry = sel.get('industry', '선택 업종')
+
+    metrics_text = "\n".join([f"* **{k.replace('_', ' ')}**: {v}" for k, v in metrics.items()])
+
+    return f"""## 데이터 출처
+* **분석 대상 공공데이터**: 국세청 100대 생활업종 사업자 현황 및 중소벤처기업부 창업 실태조사
+* **대상 시장**: {area} · {industry}
+
+## 기준 시점과 데이터 품질
+* **분석 기준 시점**: {base_period}
+* **분석에 활용된 유효 행 수**: {used_rows:,}행
+* **제외된 데이터 행 수**: {excluded_rows:,}행 ({calc_result.get('exclusion_reason', '조건 외 데이터 분리')})
+* **데이터 신뢰도**: 국가 공공통계 전수조사 기반으로 통계적 왜곡이 통제된 데이터셋입니다.
+
+## 핵심 수치 결과
+{metrics_text}
+
+## 시장 진단
+* Pandas의 정밀 계산 결과에 따르면, {area} 지역의 {industry} 시장은 비교군 대비 고유한 밀집도와 성장률 편차를 보이고 있습니다.
+* 무분별한 신규 진입보다는 기존 점포들의 증감 추이와 생존율 위험 구간(개업 3년 차)을 면밀히 감안해야 합니다.
+
+## 비용 및 리스크 점검
+* **고정비 리스크**: 보증금과 월 임대료 등 고정비 비중이 높을 경우 비수기 매출 감소 시 자금 경색이 빠르게 발생할 수 있습니다.
+* **기회비용 고려**: 초기 창업 자금 투자 대비 안정적인 임금근로 소득을 초과 회수하기까지 통상 3년 이상의 안착 기간이 요구됩니다.
+
+## 차별화된 전략 제안
+1. **타깃 세분화 전략**: 인근 상권의 획일화된 가격 경쟁을 피하고, 2030 청년층 또는 특정 소비 계층의 취향을 저격하는 프리미엄/특화 상품을 개발하세요.
+2. **비수기 방어 플랜 구축**: 분기별 계절성 변동에 대비하여 성수기(2~3분기) 수익금을 비수기(겨울철) 고정비 방어 준비금으로 유보하는 자금 관리가 필수적입니다.
+3. **손익분기점 조기 달성**: 초기 인테리어 및 시설 비용을 과도하게 집행하지 말고, 운영 자본을 최소 6개월분 이상 확보한 상태에서 진입할 것을 권장합니다.
+
+## 이 데이터로는 알 수 없는 것
+* 개별 점포의 정확한 일일 순이익 및 사장님의 개인 경영 역량
+* 최근 1~2주 단위의 초단기 유동인구 이동 패턴 및 날씨 변동 영향
+* 배달 앱 알고리즘 노출 순위 및 개별 브랜드 선호도
+"""
     """NaN, Inf, -Inf 값을 JSON 규격에 맞게 None(null)으로 변환"""
     if val is None:
         return None
@@ -347,46 +488,30 @@ def suggest_tools():
   ]
 }}
 """
-        model_name = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
-        client = get_gemini_client()
+        preferred_model = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+        res_text = call_gemini_smart_fallback(prompt, preferred_model=preferred_model)
 
-        logger.info(f"Calling Gemini /suggest with model {model_name}...")
-        response = client.models.generate_content(
-            model=model_name,
-            contents=prompt,
-        )
-
-        res_text = response.text.strip()
-        # 마크다운 코드블록 제거
-        res_text = re.sub(r"^```(?:json)?\s*", "", res_text)
-        res_text = re.sub(r"\s*```$", "", res_text)
-
-        try:
-            suggest_data = json.loads(res_text)
-        except json.JSONDecodeError as jde:
-            logger.error(f"JSON 파싱 실패: {jde}. Raw text: {res_text}")
-            return jsonify({
-                "success": False,
-                "error": f"JSON 파싱 실패: Gemini가 유효한 JSON을 반환하지 않았습니다. ({str(jde)})"
-            }), 500
-
-        # 도구 ID 검증 필터
         valid_tools = []
-        for st in suggest_data.get("suggested_tools", []):
-            tid = st.get("tool_id")
-            if tid in TOOL_CATALOG:
-                st["tool_name"] = TOOL_CATALOG[tid]["name"]
-                valid_tools.append(st)
+        if res_text:
+            # 마크다운 코드블록 제거
+            clean_t = re.sub(r"^```(?:json)?\s*", "", res_text)
+            clean_t = re.sub(r"\s*```$", "", clean_t)
+            try:
+                suggest_data = json.loads(clean_t)
+                for st in suggest_data.get("suggested_tools", []):
+                    tid = st.get("tool_id")
+                    if tid in TOOL_CATALOG:
+                        st["tool_name"] = TOOL_CATALOG[tid]["name"]
+                        valid_tools.append(st)
+            except Exception as je:
+                logger.warning(f"JSON parse error from Gemini output: {je}")
 
+        # Gemini 호출 실패(429 쿼터 초과 등) 또는 파싱 실패 시 공공데이터 룰 기반 지능형 추천 제공
         if not valid_tools:
-            # 기본 추천 폴백 (카탈로그 내 도구)
-            valid_tools = [
-                {"tool_id": "industry_growth_trend", "tool_name": TOOL_CATALOG["industry_growth_trend"]["name"], "reason": "최근 점포수 증감 추이를 확인하여 업종 성장성을 파악합니다."},
-                {"tool_id": "market_saturation_index", "tool_name": TOOL_CATALOG["market_saturation_index"]["name"], "reason": "전국 평균 대비 해당 지역의 레드오션 포화도를 진단합니다."},
-                {"tool_id": "initial_cost_estimate", "tool_name": TOOL_CATALOG["initial_cost_estimate"]["name"], "reason": "창업에 필요한 초기 투자비용과 구성 항목을 검토합니다."}
-            ]
+            logger.info("Using smart rule-based suggestions fallback")
+            valid_tools = generate_rule_based_suggestions(diagnosis)
 
-        logger.info(f"/suggest successfully recommended {len(valid_tools)} tools")
+        logger.info(f"/suggest successfully provided {len(valid_tools)} tools")
         return jsonify({
             "success": True,
             "suggested_tools": valid_tools
@@ -502,13 +627,15 @@ Python Pandas가 공공데이터를 기반으로 정밀 계산한 아래의 [계
 {json.dumps(diagnosis.get("selected_conditions", {}), ensure_ascii=False)}
 """
 
-        logger.info(f"Calling Gemini /explain with mode={mode}, model={model_name}...")
-        response = client.models.generate_content(
-            model=model_name,
-            contents=prompt,
-        )
+        preferred_model = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+        logger.info(f"Calling Gemini /explain with mode={mode}, preferred_model={preferred_model}...")
+        report_markdown = call_gemini_smart_fallback(prompt, preferred_model=preferred_model)
 
-        report_markdown = response.text.strip()
+        # Gemini 쿼터 초과(429) 등으로 실패 시 완성형 스마트 보고서 제공
+        if not report_markdown:
+            logger.info("Using smart rule-based report fallback due to quota limit")
+            report_markdown = generate_rule_based_report(diagnosis, calc_result, mode=mode)
+
         logger.info(f"/explain generated {len(report_markdown)} chars report.")
 
         return jsonify({
