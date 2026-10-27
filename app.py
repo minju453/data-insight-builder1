@@ -140,7 +140,7 @@ def index():
 def health():
     """서버 상태와 Gemini API Key 설정 여부 반환 (키 노출 금지)"""
     api_key = os.getenv("GEMINI_API_KEY", "").strip()
-    model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    model_name = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
     has_api_key = bool(api_key)
     
     return jsonify({
@@ -347,7 +347,7 @@ def suggest_tools():
   ]
 }}
 """
-        model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        model_name = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
         client = get_gemini_client()
 
         logger.info(f"Calling Gemini /suggest with model {model_name}...")
@@ -453,7 +453,7 @@ def explain_result():
         diagnosis = req_data.get("diagnosis", {})
         calc_result = req_data.get("calculation_result", {})
 
-        model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        model_name = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
         client = get_gemini_client()
 
         if mode == "A":
