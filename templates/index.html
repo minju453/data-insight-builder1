@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Startup Market Navigator | 청년 창업 시장 분석기</title>
+    <!-- Chart.js 최신 CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- 상단 헤더 -->
+        <header class="main-header">
+            <div class="header-content">
+                <div class="logo-area">
+                    <span class="badge">청년 창업 지원 솔루션</span>
+                    <h1>🚀 Startup Market Navigator</h1>
+                    <p class="subtitle">공공 빅데이터(국세청·통계청·국민연금)와 생성형 AI 기반 시장성 진단</p>
+                </div>
+                <div class="server-status-area">
+                    <span id="server-status-badge" class="status-indicator">서버 연결 확인 중...</span>
+                    <span id="api-key-badge" class="status-indicator">Gemini API 상태</span>
+                </div>
+            </div>
+        </header>
+
+        <main class="main-content">
+            <!-- 1단계: 조건 선택 섹션 -->
+            <section class="card filter-section">
+                <div class="card-header">
+                    <h2>1단계: 분석 조건 선택</h2>
+                    <p class="step-desc">서버에 사전 적재된 공공데이터에서 분석할 지역과 업종을 선택하세요.</p>
+                </div>
+                <div class="card-body">
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label for="select-sido">시·도 (광역자치단체)</label>
+                            <select id="select-sido" class="form-control">
+                                <option value="">시·도 선택 중...</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="select-sigungu">시·군·구 (기초자치단체)</label>
+                            <select id="select-sigungu" class="form-control">
+                                <option value="전체">전체 (시·도 합산)</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="select-industry">창업 희망 업종 (100대 생활업종)</label>
+                            <select id="select-industry" class="form-control">
+                                <option value="">업종 선택 중...</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="btn-group">
+                        <button id="btn-inspect" class="btn btn-primary">🔍 데이터 상태 진단 (/inspect)</button>
+                        <button id="btn-reset" class="btn btn-secondary">초기화</button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 2단계: 데이터 진단 결과 섹션 -->
+            <section id="inspect-section" class="card hidden">
+                <div class="card-header">
+                    <h2>2단계: 데이터 진단 결과 (/inspect)</h2>
+                    <span id="inspect-condition-tag" class="condition-tag">선택 조건</span>
+                </div>
+                <div class="card-body">
+                    <!-- 경고창 영역 -->
+                    <div id="inspect-warnings" class="warning-box hidden"></div>
+
+                    <!-- 요약 메트릭 그리드 -->
+                    <div class="metric-grid">
+                        <div class="metric-card">
+                            <div class="metric-title">필터링 행 수</div>
+                            <div id="metric-rows" class="metric-value">-</div>
+                            <div class="metric-sub" id="metric-cols">0개 열</div>
+                        </div>
+                        <div class="metric-card">
+                            <div class="metric-title">지역 점포수 (당월)</div>
+                            <div id="metric-local-stores" class="metric-value">-</div>
+                            <div class="metric-sub" id="metric-share">전국 대비 0%</div>
+                        </div>
+                        <div class="metric-card">
+                            <div class="metric-title">전국 총 점포수</div>
+                            <div id="metric-national-stores" class="metric-value">-</div>
+                            <div class="metric-sub">동일 업종 기준</div>
+                        </div>
+                        <div class="metric-card">
+                            <div class="metric-title">결측치 비율</div>
+                            <div id="metric-missing" class="metric-value">0%</div>
+                            <div class="metric-sub" id="metric-missing-count">0건 누락</div>
+                        </div>
+                    </div>
+
+                    <!-- 데이터 미리보기 테이블 -->
+                    <div class="preview-area">
+                        <h3>📋 필터링 데이터 미리보기 (상위 10행)</h3>
+                        <div class="table-responsive">
+                            <table id="preview-table" class="data-table">
+                                <thead></thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="action-footer">
+                        <button id="btn-suggest" class="btn btn-accent">💡 Gemini에게 분석 도구 추천받기 (/suggest)</button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 3단계: AI 도구 추천 섹션 -->
+            <section id="suggest-section" class="card hidden">
+                <div class="card-header">
+                    <h2>3단계: Gemini 맞춤형 분석 도구 제안 (/suggest)</h2>
+                    <p class="step-desc">진단된 데이터 품질과 상권 특성에 맞춰 Gemini가 도구 카탈로그에서 3~5개를 선별했습니다.</p>
+                </div>
+                <div class="card-body">
+                    <div id="suggested-tools-container" class="tools-grid"></div>
+                </div>
+            </section>
+
+            <!-- 4단계: Pandas 계산 및 차트 시각화 섹션 -->
+            <section id="run-section" class="card hidden">
+                <div class="card-header">
+                    <h2 id="run-tool-title">4단계: Pandas 계산 결과 및 시각화 (/run)</h2>
+                    <div class="tool-meta-tags">
+                        <span id="run-base-period" class="meta-tag">기준 시점: -</span>
+                        <span id="run-sample-rows" class="meta-tag">사용 행 수: -</span>
+                        <span id="run-excluded-rows" class="meta-tag">제외 행 수: -</span>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <!-- 요약 지표 영역 -->
+                    <div id="run-summary-box" class="summary-box"></div>
+
+                    <!-- 차트 영역 -->
+                    <div class="chart-container">
+                        <canvas id="resultChart"></canvas>
+                    </div>
+
+                    <!-- 상세 계산 데이터 테이블 -->
+                    <div class="table-area">
+                        <h3>📊 Pandas 계산 상세 데이터표</h3>
+                        <div class="table-responsive">
+                            <table id="run-data-table" class="data-table">
+                                <thead></thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- 주의사항 영역 -->
+                    <div id="run-notes-box" class="notes-box"></div>
+
+                    <div class="action-footer">
+                        <div class="explain-mode-selector">
+                            <label><input type="radio" name="explain-mode" value="B" checked> <strong>모드 B (정식 보고서)</strong>: Pandas 계산 수치만 Gemini에 전달하여 엄격 검증</label>
+                            <label><input type="radio" name="explain-mode" value="A"> <strong>모드 A (비교용 보고서)</strong>: 진단 요약만 전달 (계산 수치 미제공)</label>
+                        </div>
+                        <button id="btn-explain" class="btn btn-success">📑 Gemini 창업 전략 보고서 생성 (/explain)</button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 5단계: Gemini 최종 전략 보고서 섹션 -->
+            <section id="report-section" class="card hidden">
+                <div class="card-header">
+                    <h2 id="report-title">5단계: Gemini AI 창업 전략 종합 보고서 (/explain)</h2>
+                    <span id="report-mode-tag" class="mode-tag">모드 B</span>
+                </div>
+                <div class="card-body">
+                    <div id="report-content" class="report-markdown-view"></div>
+                </div>
+            </section>
+        </main>
+
+        <!-- 디버그 및 에러 복사 도구 (오류 발생 시 AI에게 전달) -->
+        <footer class="app-footer">
+            <div class="footer-actions">
+                <button id="btn-copy-debug" class="btn btn-outline-debug">📋 현재 상태 및 콘솔 로그 복사 (AI 오류 전달용)</button>
+                <button id="btn-toggle-log" class="btn btn-outline-sm">콘솔 로그 패널 열기/닫기</button>
+            </div>
+            <div id="log-panel" class="log-panel hidden">
+                <div class="log-panel-header">
+                    <span>시스템 실행 로그</span>
+                    <button id="btn-clear-log" class="btn-text">지우기</button>
+                </div>
+                <pre id="log-stream" class="log-stream"></pre>
+            </div>
+            <p class="copyright">Startup Market Navigator © 2026 청년 창업 데이터 인텔리전스</p>
+        </footer>
+    </div>
+
+    <!-- 스피너 오버레이 -->
+    <div id="loading-overlay" class="loading-overlay hidden">
+        <div class="spinner"></div>
+        <div id="loading-message" class="loading-text">처리 중입니다...</div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
