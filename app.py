@@ -23,7 +23,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger("startup-navigator")
 
-app = Flask(__name__)
+# 기본 경로 설정 (Vercel 서버리스 환경 호환)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+app = Flask(
+    __name__,
+    template_folder=os.path.join(BASE_DIR, "templates"),
+    static_folder=os.path.join(BASE_DIR, "static")
+)
 
 # 전역 데이터 저장소
 DATASETS = {}
@@ -78,7 +85,7 @@ def load_csv_safely(file_path):
 def load_all_datasets():
     """서버 기동 시 data/ 폴더 내 정적 CSV 파일들을 전역 메모리에 1회 로드"""
     global DATASETS
-    data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
+    data_dir = os.path.join(BASE_DIR, 'data')
     if not os.path.exists(data_dir):
         logger.error(f"Data directory not found: {data_dir}")
         return
