@@ -130,6 +130,8 @@ def load_all_datasets():
 load_all_datasets()
 
 @app.route("/")
+@app.route("/api/index")
+@app.route("/api/index/")
 def index():
     logger.info("Serving index.html")
     return render_template("index.html")
