@@ -364,6 +364,8 @@ def inspect_data():
     """사용자가 선택한 조건(지역, 업종)으로 데이터를 필터링하고 8개 항목 진단 결과 JSON 반환"""
     try:
         req_data = request.get_json(silent=True) or {}
+        sido = req_data.get("sido", "").strip()
+        sigungu = req_data.get("sigungu", "").strip()
         raw_industry = req_data.get("industry", "").strip()
         industry = resolve_industry_name(raw_industry)
 
